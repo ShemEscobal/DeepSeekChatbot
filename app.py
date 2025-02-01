@@ -38,16 +38,52 @@ if prompt := st.chat_input("Enter your prompt:"):
         stream=True  # Enable streaming for real-time responses
     )
 
-    # Stream the response
-    with st.chat_message("assistant"):
-        response_placeholder = st.empty()  # Placeholder to update the response dynamically
-        full_response = ""
+    # Function to process and remove <think> blocks
+    def process_response(response):
+        buffer = ""
+        in_think_block = False
+        
         for token in response:
             if hasattr(token, 'choices') and token.choices:
                 content = token.choices[0].delta.content
                 if content:
-                    full_response += content
-                    response_placeholder.markdown(full_response)  # Update the response in real-time
+                    buffer += content
+                    
+                    # Check if we have complete think tags
+                    while True:
+                        if not in_think_block:
+                            think_start = buffer.find('<think>')
+                            if think_start >= 0:
+                                # Send content before the think tag
+                                if think_start > 0:
+                                    yield buffer[:think_start]
+                                buffer = buffer[think_start:]
+                                in_think_block = True
+                            else:
+                                # No think tag found, send the buffer
+                                yield buffer
+                                buffer = ""
+                                break
+                        else:
+                            think_end = buffer.find('</think>')
+                            if think_end >= 0:
+                                # Remove the think block and continue processing
+                                buffer = buffer[think_end + 8:]  # 8 is length of '</think>'
+                                in_think_block = False
+                            else:
+                                break
+        
+        # Handle any remaining content
+        if buffer and not in_think_block:
+            yield buffer
+
+    # Stream the response and remove <think> blocks
+    with st.chat_message("assistant"):
+        response_placeholder = st.empty()  # Placeholder to update the response dynamically
+        full_response = ""
+        for chunk in process_response(response):
+            full_response += chunk
+            response_placeholder.markdown(full_response)  # Update the response in real-time
         
         # Add assistant response to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": full_response})
