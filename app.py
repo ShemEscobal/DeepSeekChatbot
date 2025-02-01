@@ -3,7 +3,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
 import json
-import pandas as pd
+import re
 from together import Together
 
 app = Flask(__name__)
@@ -18,78 +18,6 @@ limiter = Limiter(
 
 # Initialize the Together client
 client = Together(api_key="874bde375c479480654683abd21050ae0381971860908bc4dd368b282b3fa94b")
-
-# Configure research database path
-RESEARCH_DB_PATH = r'C:\Users\IOTTC-05\Documents\deepseekrev\RESEARCH PRODUCTIVITY TEMPLATE.xlsx'
-
-def load_research_db():
-    """Load the research database with error handling"""
-    try:
-        df = pd.read_excel(RESEARCH_DB_PATH)
-        print("Research database loaded successfully")
-        print(f"Columns in the database: {df.columns.tolist()}")  # Debug: Print columns
-        return df
-    except Exception as e:
-        print(f"Error loading research database: {e}")
-        return None
-
-def refresh_research_db():
-    """Refresh the research database"""
-    global research_db
-    research_db = load_research_db()
-
-# Initial database load
-research_db = load_research_db()
-
-def is_research_topic(prompt):
-    """
-    Check if the prompt is related to research topics.
-    Returns True if research-related keywords are found.
-    """
-    research_keywords = {
-        'research', 'study', 'paper', 'article', 'publication', 
-        'thesis', 'dissertation', 'findings', 'methodology',
-        'analysis', 'results', 'conclusion', 'experiment'
-    }
-    prompt_words = set(prompt.lower().split())
-    return bool(prompt_words & research_keywords)
-
-def query_research_db(prompt):
-    """
-    Query the research database based on the prompt.
-    Returns a list of matching research entries.
-    """
-    if research_db is None:
-        print("Research database not available")
-        return []
-        
-    try:
-        # Split prompt into keywords
-        keywords = [word for word in prompt.lower().split() if len(word) > 2]
-        
-        if not keywords:
-            return []
-            
-        # Create search pattern
-        search_pattern = '|'.join(keywords)
-        
-        # Search across multiple columns with error handling
-        results = research_db[
-            research_db['Title of the Study'].str.contains(search_pattern, case=False, na=False, regex=True) |
-            research_db['Name of Faculty'].str.contains(search_pattern, case=False, na=False, regex=True) |
-            research_db['Year'].astype(str).str.contains(search_pattern, case=False, na=False, regex=True) |
-            research_db['Presented In'].str.contains(search_pattern, case=False, na=False, regex=True) |
-            research_db['Published In'].str.contains(search_pattern, case=False, na=False, regex=True)
-        ]
-        
-        # Sort by relevance (you can modify this based on your needs)
-        results = results.head(3)  # Limit to top 3 most relevant results
-        
-        print(f"Found {len(results)} matching research entries")  # Debug: Print number of results
-        return results.to_dict(orient='records')
-    except Exception as e:
-        print(f"Error querying database: {e}")
-        return []
 
 @app.route('/')
 def index():
@@ -113,34 +41,7 @@ def get_response():
         # Add the user's message to the chat history
         chat_history.append({"role": "user", "content": prompt})
 
-        # Check if the prompt is related to research topics
-        if is_research_topic(prompt):
-            print("Prompt is research-related. Querying database...")  # Debug: Log research topic detection
-            # Query the research database
-            research_results = query_research_db(prompt)
-            if research_results:
-                print("Research results found. Augmenting prompt...")  # Debug: Log results found
-                # Create a system message with the research context
-                research_context = "Based on our research database, here are relevant findings:\n\n"
-                for idx, result in enumerate(research_results, 1):
-                    research_context += f"Research {idx}:\n"
-                    research_context += f"Title of the Study: {result.get('Title of the Study', 'N/A')}\n"
-                    research_context += f"Name of Faculty: {result.get('Name of Faculty', 'N/A')}\n"
-                    research_context += f"Year: {result.get('Year', 'N/A')}\n"
-                    research_context += f"Presented In: {result.get('Presented In', 'N/A')}\n"
-                    research_context += f"Published In: {result.get('Published In', 'N/A')}\n\n"
-                
-                # Add research context as a system message
-                chat_history.append({
-                    "role": "system",
-                    "content": research_context
-                })
-            else:
-                print("No research results found for the prompt.")  # Debug: Log no results
-        else:
-            print("Prompt is not research-related.")  # Debug: Log non-research topic
-
-        # Call the Together API with the complete chat history
+        # Call the Together API to stream the response
         response = client.chat.completions.create(
             model="deepseek-ai/DeepSeek-R1",
             messages=chat_history,
@@ -201,17 +102,6 @@ def get_response():
 
         return Response(generate(response), content_type='text/event-stream')
 
-    except Exception as e:
-        print(f"Error in get_response: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/refresh-db', methods=['POST'])
-@limiter.limit("1 per minute")
-def refresh_database():
-    """Endpoint to manually refresh the research database"""
-    try:
-        refresh_research_db()
-        return jsonify({'message': 'Database refreshed successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
